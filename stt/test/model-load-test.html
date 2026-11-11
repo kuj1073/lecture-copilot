@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Vosk 모델 로드 테스트</title>
+  <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+</head>
+<body>
+  <p id="status">모델을 불러오는 중...</p>
+  <script>
+    async function run() {
+      const statusEl = document.getElementById("status");
+      try {
+        const model = await Vosk.createModel("model.tar.gz");
+        statusEl.textContent = "모델 로드 성공";
+        console.log("model ready:", model.ready);
+      } catch (error) {
+        statusEl.textContent = "모델 로드 실패: " + error.message;
+        console.error(error);
+      }
+    }
+
+    window.onload = run;
+  </script>
+</body>
+</html>
