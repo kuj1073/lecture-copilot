@@ -1,0 +1,16 @@
+{
+  "name": "stt",
+  "version": "0.1.0",
+  "description": "실시간 녹음 및 음성 인식 모듈",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "vosk-browser": "^0.0.8"
+  }
+}
