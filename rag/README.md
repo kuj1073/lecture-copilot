@@ -4,6 +4,25 @@
 
 실시간 강의 메모 생성과 수업 중 질의응답(RAG)을 담당한다.
 
+## 현재 구현 단계 — 1차 구현
+
+담당 범위의 약 절반을 목표로 **자동 메모 기본형 + 질의응답의 근거 검색**을 구현했다.
+아래의 전체 범위가 모두 완료됐다는 의미는 아니다. 현재 프론트엔드는 기존 mock 모드를 유지한다.
+
+| 항목 | 현재 상태 |
+|---|---|
+| 발화 기반 메모 | 구현: 관련 자료의 키워드와 개념·예시 표현을 참고해 원문 문장을 최대 2개 선택 |
+| 메모 분류·누적 | 구현: concept / explain / example 분류, 원문 보존, 중복 발화 재전송 방지 |
+| 불확실성 표시 | 구현: 신뢰도 0.7 미만·신뢰도 미제공·페이지 미확인 등 표시 |
+| 질문 근거 검색 | 구현: 현재 강의의 자료·발화에서 키워드 검색, 주제 없이 최근 설명을 묻는 경우 최근 발화 조회 |
+| 근거 범위 제한 | 구현: 질문 시점까지 끝났고 인식 완료된 발화만 사용, 페이지·발화 구간 반환 |
+| AI 요약·답변 생성 | 미구현: 현재 메모는 원문 추출식이며 검색 결과는 답변이 아님 |
+| 의미 검색·후속 질문 | 미구현: 동의어/의미 검색, 대화 맥락 해석, 자료·발화의 모순 판단 |
+| 화면·서버 연결 | 미구현: 다른 담당 파일은 수정하지 않음 |
+
+JavaScript ES 모듈로 작성했으며 외부 패키지나 API 키가 필요 없다.
+메모와 검색은 입력된 텍스트를 처리하는 함수이고, 마이크·화면·파일·외부 서버에 접근하지 않는다.
+
 ## 범위
 
 **실시간 강의 메모**
@@ -24,3 +43,131 @@
 
 - 자료·발화 기록은 [`data/`](../data/)에서 받는다
 - 메모·답변 결과는 [`frontend/`](../frontend/)에 표시된다
+
+## 실행과 확인
+
+Node.js 20 이상에서 저장소 최상위 기준:
+
+```bash
+node rag/demo.js
+node --test rag/test/rag.test.js
+```
+
+또는 `rag/` 폴더에서 `npm test`, `npm run demo`를 실행한다. `npm install`은 필요 없다.
+데모의 수업 내용은 입력 예시이며, 결과를 하드코딩하지 않고 실제 메모·검색 함수를 호출한다.
+
+## 다른 모듈에서 사용하는 방법
+
+```js
+import { LectureRag } from './rag/index.js'; // 호출 파일 위치에 맞춰 경로 조정
+
+const rag = new LectureRag({
+  lectureId: 'lecture-1',
+  pages: [
+    { page: 1, text: 'FCFS: 도착한 순서대로 작업을 실행한다.' },
+  ],
+});
+
+const memo = rag.addUtterance({
+  id: 'utt-1',
+  lectureId: 'lecture-1',
+  text: 'FCFS란 먼저 도착한 작업부터 실행하는 방식입니다.',
+  page: 1,
+  startMs: 1000,
+  endMs: 3000,
+  confidence: 0.93,
+}, { receivedAtMs: 3500 });
+
+// memo가 null이면 이미 처리한 발화이므로 화면에 다시 추가하지 않는다.
+// memo가 있으면 기존 addMemo(memo)에 전달할 수 있다.
+console.log(memo);
+
+const evidence = rag.search('FCFS가 뭐야?', {
+  askedAtMs: 4000,
+  currentPage: 1,
+  limit: 5,
+});
+console.log(evidence);
+```
+
+`LectureRag`는 **강의 하나와 자료 하나에 대응하는 인스턴스**다. 새 강의나 새 자료를 열 때 새로 만든다.
+페이지 데이터는 생성 시 복사하며, 발화마다 `lectureId`가 일치해야 한다.
+페이지 연결은 `data/`가 제공한 값을 사용한다. RAG가 교수자의 설명 페이지를 추정해서 바꾸지 않는다.
+
+### 입력 약속
+
+| 입력 | 필드와 의미 |
+|---|---|
+| 강의자료 | `[{ page, text }]`. 페이지 번호는 1부터 시작. `data` 파서 결과 형식 사용 |
+| 인식 완료된 발화 | `{ id, lectureId, text, page, startMs, endMs, confidence? }`. `frontend`의 발화 형식 사용 |
+| 수신 시각 | `receivedAtMs`: 이 발화가 인식 완료되어 RAG에 전달된 시각 |
+| 질문 시각 | `askedAtMs`: 사용자가 질문을 보낸 시각 |
+| 검색 옵션 | `currentPage`는 동점일 때 우선순위만 조정. `limit`는 반환 근거 수(1~20, 기본 5) |
+
+모든 시각은 **동일한 녹음 시작 기준의 경과 밀리초(ms)**다. 이어서 녹음하더라도 기준은 이어져야 한다.
+`receivedAtMs`와 `askedAtMs`에는 연동 시 `elapsedMs()` 같은 동일한 시계를 사용한다.
+`startMs <= endMs <= receivedAtMs`여야 하며, `endMs`와 `receivedAtMs`가 모두 질문 시각 이하여야 검색된다.
+따라서 질문 전 발화라도 질문 뒤에 인식이 완료됐으면 그 질문의 근거에는 들어가지 않는다.
+
+현재 `data`의 기록은 `{ type, text, timestamp, page }`이고, STT 큐는 `{ text, start, end }`다.
+이를 연결할 때 **안정적인 발화 ID, 강의 ID, 시작·종료 시각, 인식 완료 시각**을 제공해야 한다.
+초 단위 값이면 ms로 변환해야 하며, 종료 시각을 모르는 기록에 임의의 값을 만들어 넣지 않는다.
+그 변환 및 연결 코드는 이번 작업에 포함하지 않았다.
+
+### 출력 약속
+
+메모는 기존 화면에서 사용하는 필드를 포함한다:
+
+```js
+{
+  id, lectureId,
+  kind: 'concept', // 'concept' | 'explain' | 'example'
+  text, page, startMs, endMs,
+  utteranceIds: ['utt-1'],
+  sources: [{ type: 'utterance', utteranceId: 'utt-1', page, startMs, endMs }],
+  uncertain: false,
+  uncertaintyReasons: [],
+  method: 'extractive'
+}
+```
+
+검색은 다음 구조를 반환한다:
+
+```js
+{
+  lectureId, askedAtMs,
+  insufficient: false,
+  matches: [
+    { text, source: { type: 'page', page: 1 }, score: 1, match: 'keyword', uncertain: false }
+  ],
+  sources: [{ type: 'page', page: 1 }]
+}
+```
+
+발화 근거에는 `utteranceId`, `page`, `startMs`, `endMs`가 포함된다.
+`insufficient: true`는 검색 결과가 없다는 뜻이다. `false`라고 해서 질문에 충분히 답할 수 있다는 뜻은 아니다.
+`score`는 일치 키워드 수이며 정답 확률이 아니다. 최근 발화 조회는 `match: 'recent'`로 구분한다.
+질문에 대한 자연어 답변은 아직 만들지 않으므로 검색 결과를 최종 답변인 것처럼 표시하지 않는다.
+
+`getMemos()`와 `getUtterances()`로 누적 기록의 복사본을 받을 수 있다.
+현재 누적은 메모리 안에서만 유지된다. 영구 저장은 기존 `data/` 담당 코드와 후속 연동한다.
+
+## 제한사항과 다음 구현
+
+- 메모는 **원문 문장 선택**이다. 자연스러운 AI 재서술, 용어 교정, 의미 기준 중복 제거는 아직 하지 않는다.
+- 자료는 메모 문장 선택의 키워드 기준으로만 참고한다. 자료와 발화의 내용 비교·통합은 후속 작업이다.
+- 검색은 일부 한국어 조사 제거와 영문 대소문자 처리를 적용한 키워드 방식이다. 동의어와 복잡한 후속 질문은 놓칠 수 있다.
+- `방금 예시 다시 설명해줘` 같은 주제 없는 최근 발화 요청은 최근 기록을 찾는다. 예시의 의미나 유형을 이해해서 찾는 것은 아니다.
+- 입력 텍스트를 실행하거나 외부로 보내지 않는다. 자료 속 지시문도 원문 데이터로만 보관한다. **LLM 연결 시의 프롬프트 인젝션 방어가 완료된 것은 아니다.**
+- 모델을 붙일 때는 자료/발화와 시스템 지시 분리, 강의 범위 유지, 출력 출처 검증, 근거 부족 응답을 추가해야 한다.
+- 실제 AI 메모·답변 생성, 후속 질문, 자료·발화 간 차이 설명, 화면/서버 연결과 녹음 중 통합 테스트를 이어서 구현한다.
+
+## 파일 구성
+
+- `index.js`: 강의별 입력 관리, 메모 누적, 검색 진입점
+- `src/memo.js`: 원문 문장 선택, 메모 분류, 불확실성·발화 근거 표시
+- `src/retrieval.js`: 키워드/최근 발화 검색, 질문 시각 범위 제한
+- `src/text.js`: 키워드·문장 처리
+- `src/validation.js`: 입력과 강의·시간 범위 검증
+- `demo.js`: 메모와 검색의 실행 예시
+- `test/rag.test.js`: 강의 격리, 시간 제한, 원문 보존, 검색·메모 동작 테스트
