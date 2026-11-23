@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>실시간 녹음+인식 동시 동작 테스트</title>
+</head>
+<body>
+  <p>상태: <span id="status">대기 중</span></p>
+  <button id="start">녹음 시작</button>
+  <button id="stop" disabled>녹음 중지</button>
+  <ul id="utterances"></ul>
+
+  <script type="module">
+    import { loadVoskModel, createRecognizer, UtteranceQueue, LivePipeline, requestMicrophoneAccess } from '../src/index.js';
+
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const listEl = document.getElementById('utterances');
+
+    function renderUtterances(utterances) {
+      listEl.innerHTML = '';
+      for (const utterance of utterances) {
+        const li = document.createElement('li');
+        li.textContent = `[${utterance.start}~${utterance.end}] ${utterance.text}`;
+        listEl.appendChild(li);
+      }
+    }
+
+    async function main() {
+      const model = await loadVoskModel('model.tar.gz');
+      const recognizer = createRecognizer(model);
+      const utteranceQueue = new UtteranceQueue();
+      const statusEmitter = { set: (status) => { statusEl.textContent = status; } };
+      const pipeline = new LivePipeline(recognizer, statusEmitter, utteranceQueue);
+
+      let liveRenderTimer = null;
+
+      startBtn.addEventListener('click', async () => {
+        const stream = await requestMicrophoneAccess();
+        pipeline.start(stream);
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        // 동시 동작 확인: 녹음·인식이 돌아가는 중에도 큐에 쌓이는 발화를 1초 간격으로 화면에 반영한다.
+        liveRenderTimer = setInterval(() => renderUtterances(utteranceQueue.all()), 1000);
+      });
+
+      stopBtn.addEventListener('click', async () => {
+        clearInterval(liveRenderTimer);
+        const utterances = await pipeline.stop();
+        renderUtterances(utterances);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      });
+    }
+
+    main().catch((error) => {
+      statusEl.textContent = '오류: ' + error.message;
+      console.error(error);
+    });
+  </script>
+</body>
+</html>
