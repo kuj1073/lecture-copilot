@@ -1,7 +1,12 @@
 // 강의자료 뷰어: PDF 불러오기, 페이지 단위 표시, 이전/다음 이동, 현재 페이지 파악.
 // PPT는 data/ 의 파서(또는 PDF 변환)가 준비되면 연결한다. 지금은 안내만 표시.
 
-import { store, setPage } from '../store.js';
+import { store, setPage, elapsedMs } from '../store.js';
+import {
+  initializeBackend,
+  uploadLectureFile,
+  syncPage
+} from '../services/integration.js';
 import { el } from '../util.js';
 import { DEMO_SLIDES } from '../services/mock.js';
 
@@ -76,7 +81,7 @@ export function mountViewer(root) {
   }).observe(stage);
 
   // ---- 파일 열기 ----
-  async function openFile(file) {
+   async function openFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
     if (ext === 'ppt' || ext === 'pptx') {
       showMessage('PPT 파일은 아직 지원하지 않습니다. (data/ 파서 연동 예정)\nPDF로 내보낸 뒤 열어 주세요.', true);
@@ -92,8 +97,24 @@ export function mountViewer(root) {
       const data = new Uint8Array(await file.arrayBuffer());
       pdfDoc = await pdfjs.getDocument({ data }).promise;
       renderedKey = '';
-      store.update({ doc: { kind: 'pdf', name: file.name, pageCount: pdfDoc.numPages, currentPage: 1 }, pageHistory: [] });
-      setPage(1);
+      await initializeBackend();
+await uploadLectureFile(file);
+
+store.update({
+  doc: {
+    kind: 'pdf',
+    name: file.name,
+    pageCount: pdfDoc.numPages,
+    currentPage: 1
+  },
+  pageHistory: []
+});
+
+setPage(1);
+
+
+console.log('PDF 업로드 및 첫 페이지 동기화 성공');
+
     } catch (err) {
       console.error(err);
       pdfDoc = null;
@@ -101,6 +122,7 @@ export function mountViewer(root) {
     }
   }
 
+ 
   function openDemo() {
     pdfDoc = null;
     renderedKey = '';
@@ -171,5 +193,25 @@ export function mountViewer(root) {
     }
   }
 
-  store.subscribe(render);
+   store.subscribe(render);
+
+  let lastSyncedPage = null;
+
+  store.subscribe((state) => {
+    if (state.doc.kind !== 'pdf') {
+      lastSyncedPage = null;
+      return;
+    }
+
+    const page = state.doc.currentPage;
+
+    if (page === lastSyncedPage) return;
+
+    lastSyncedPage = page;
+
+    syncPage(page, elapsedMs()).catch((err) => {
+      console.error('페이지 동기화 실패:', err);
+      lastSyncedPage = null;
+    });
+  });
 }
