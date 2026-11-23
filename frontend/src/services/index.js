@@ -8,11 +8,30 @@ import {
 } from '../store.js';
 import { uid } from '../util.js';
 import { createMockStt, createMockMemoGenerator, mockAsk } from './mock.js';
+import {
+  syncUtterance,
+  syncMemo
+} from './integration.js';
 
 export const MODE = 'mock';
 
 const memoGen = createMockMemoGenerator({
-  onMemo: (m) => addMemo({ id: uid('memo'), createdAt: Date.now(), ...m }),
+  onMemo: (m) => {
+    const memo = {
+      id: uid('memo'),
+      createdAt: Date.now(),
+      ...m
+    };
+
+    addMemo(memo);
+
+    syncMemo({
+      text: memo.text,
+      atMs: memo.startMs ?? elapsedMs()
+    }).catch((err) => {
+      console.error('메모 백엔드 저장 실패:', err);
+    });
+  },
 });
 
 const stt = createMockStt({
@@ -22,11 +41,21 @@ const stt = createMockStt({
   onStatus: (status) => {
     if (store.get().recording.status !== status) setRecording({ status });
   },
-  onUtterance: (u) => {
-    const utterance = { id: uid('utt'), lectureId: store.get().lecture.id, ...u };
-    addUtterance(utterance);
-    memoGen.feed(utterance);
-  },
+onUtterance: (u) => {
+  const utterance = {
+    id: uid('utt'),
+    lectureId: store.get().lecture.id,
+    ...u
+  };
+
+  addUtterance(utterance);
+
+  syncUtterance(utterance).catch((err) => {
+    console.error('STT 백엔드 저장 실패:', err);
+  });
+
+  memoGen.feed(utterance);
+},
 });
 
 export async function startRecording() {
