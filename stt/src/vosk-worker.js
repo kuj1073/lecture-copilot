@@ -6,7 +6,10 @@ let modelPromise = null;
 
 export function loadVoskModel(modelUrl) {
   if (!modelPromise) {
-    modelPromise = createModel(modelUrl);
+    modelPromise = createModel(modelUrl).catch((error) => {
+      modelPromise = null;
+      throw error;
+    });
   }
   return modelPromise;
 }

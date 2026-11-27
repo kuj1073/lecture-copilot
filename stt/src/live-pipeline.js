@@ -11,8 +11,16 @@ export class LivePipeline {
     this.sourceNode = null;
     this.processorNode = null;
 
+    this.lastError = null;
+
     this.recognizer.on('result', (message) => {
       this.utteranceQueue.pushResult(message.result);
+    });
+
+    this.recognizer.on('error', (message) => {
+      this.lastError = message.error;
+      this.teardownAudioGraph();
+      this.statusEmitter.set(RecordingStatus.ERROR);
     });
   }
 
@@ -22,10 +30,16 @@ export class LivePipeline {
     this.processorNode = this.audioContext.createScriptProcessor(SCRIPT_PROCESSOR_BUFFER_SIZE, 1, 1);
 
     this.processorNode.onaudioprocess = (event) => {
-      this.recognizer.acceptWaveformFloat(
-        event.inputBuffer.getChannelData(0),
-        this.audioContext.sampleRate
-      );
+      try {
+        this.recognizer.acceptWaveformFloat(
+          event.inputBuffer.getChannelData(0),
+          this.audioContext.sampleRate
+        );
+      } catch (error) {
+        this.lastError = error.message;
+        this.teardownAudioGraph();
+        this.statusEmitter.set(RecordingStatus.ERROR);
+      }
     };
 
     this.sourceNode.connect(this.processorNode);
@@ -34,17 +48,31 @@ export class LivePipeline {
   }
 
   stop() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.statusEmitter.set(RecordingStatus.PROCESSING);
 
-      const onFinalResult = () => {
+      const cleanup = () => {
         this.recognizer.removeEventListener('result', onFinalResult);
+        this.recognizer.removeEventListener('error', onStopError);
+      };
+
+      const onFinalResult = () => {
+        cleanup();
         this.teardownAudioGraph();
         this.statusEmitter.set(RecordingStatus.STOPPED);
         resolve(this.utteranceQueue.flush());
       };
 
+      const onStopError = (message) => {
+        cleanup();
+        this.lastError = message.error;
+        this.teardownAudioGraph();
+        this.statusEmitter.set(RecordingStatus.ERROR);
+        reject(new Error(message.error));
+      };
+
       this.recognizer.addEventListener('result', onFinalResult);
+      this.recognizer.addEventListener('error', onStopError);
       this.recognizer.retrieveFinalResult();
     });
   }
@@ -53,12 +81,15 @@ export class LivePipeline {
     if (this.processorNode) {
       this.processorNode.disconnect();
       this.processorNode.onaudioprocess = null;
+      this.processorNode = null;
     }
     if (this.sourceNode) {
       this.sourceNode.disconnect();
+      this.sourceNode = null;
     }
-    if (this.audioContext) {
+    if (this.audioContext && this.audioContext.state !== 'closed') {
       this.audioContext.close();
     }
+    this.audioContext = null;
   }
 }

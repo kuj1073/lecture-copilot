@@ -21,7 +21,12 @@ export async function sendUtterance(lectureId, utterance, apiUrl = DEFAULT_API_U
 export async function sendUtterances(lectureId, utterances, apiUrl = DEFAULT_API_URL) {
   const results = [];
   for (const utterance of utterances) {
-    results.push(await sendUtterance(lectureId, utterance, apiUrl));
+    try {
+      const sent = await sendUtterance(lectureId, utterance, apiUrl);
+      results.push({ utterance, ok: true, sent });
+    } catch (error) {
+      results.push({ utterance, ok: false, error: error.message });
+    }
   }
   return results;
 }
