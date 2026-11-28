@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>STT -> data API 통합 테스트</title>
+</head>
+<body>
+  <p>백엔드: <input id="apiUrl" value="http://127.0.0.1:8000" size="30" /></p>
+  <p>강의 ID: <input id="lectureId" value="stt-integration-test" /></p>
+  <p>상태: <span id="status">대기 중</span></p>
+  <button id="start">녹음 시작</button>
+  <button id="stop" disabled>녹음 중지</button>
+  <button id="send" disabled>발화 전송</button>
+  <ul id="utterances"></ul>
+  <h4>전송 결과</h4>
+  <ul id="sendResults"></ul>
+
+  <script type="module">
+    import {
+      loadVoskModel, createRecognizer, UtteranceQueue, LivePipeline,
+      requestMicrophoneAccess, sendUtterances
+    } from '../src/index.js';
+
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const sendBtn = document.getElementById('send');
+    const listEl = document.getElementById('utterances');
+    const resultsEl = document.getElementById('sendResults');
+    const apiUrlEl = document.getElementById('apiUrl');
+    const lectureIdEl = document.getElementById('lectureId');
+
+    let lastUtterances = [];
+
+    function renderUtterances(utterances) {
+      listEl.innerHTML = '';
+      for (const utterance of utterances) {
+        const li = document.createElement('li');
+        li.textContent = `[${utterance.start}~${utterance.end}] ${utterance.text}`;
+        listEl.appendChild(li);
+      }
+    }
+
+    function renderSendResults(results) {
+      resultsEl.innerHTML = '';
+      for (const result of results) {
+        const li = document.createElement('li');
+        li.textContent = result.ok
+          ? `성공: "${result.utterance.text}"`
+          : `실패: "${result.utterance.text}" (${result.error})`;
+        resultsEl.appendChild(li);
+      }
+    }
+
+    async function ensureLecture(apiUrl, lectureId) {
+      const response = await fetch(`${apiUrl}/lectures/${encodeURIComponent(lectureId)}`, { method: 'POST' });
+      if (!response.ok && response.status !== 409) {
+        throw new Error(`강의 생성 실패: ${response.status}`);
+      }
+    }
+
+    async function main() {
+      const model = await loadVoskModel('model.tar.gz');
+      const recognizer = createRecognizer(model);
+      const utteranceQueue = new UtteranceQueue();
+      const statusEmitter = { set: (status) => { statusEl.textContent = status; } };
+      const pipeline = new LivePipeline(recognizer, statusEmitter, utteranceQueue);
+
+      startBtn.addEventListener('click', async () => {
+        const stream = await requestMicrophoneAccess();
+        pipeline.start(stream);
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        sendBtn.disabled = true;
+      });
+
+      stopBtn.addEventListener('click', async () => {
+        lastUtterances = await pipeline.stop();
+        renderUtterances(lastUtterances);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        sendBtn.disabled = lastUtterances.length === 0;
+      });
+
+      sendBtn.addEventListener('click', async () => {
+        const apiUrl = apiUrlEl.value;
+        const lectureId = lectureIdEl.value;
+        sendBtn.disabled = true;
+        try {
+          await ensureLecture(apiUrl, lectureId);
+          const results = await sendUtterances(lectureId, lastUtterances, apiUrl);
+          renderSendResults(results);
+        } catch (error) {
+          statusEl.textContent = '전송 오류: ' + error.message;
+        } finally {
+          sendBtn.disabled = false;
+        }
+      });
+    }
+
+    main().catch((error) => {
+      statusEl.textContent = '오류: ' + error.message;
+      console.error(error);
+    });
+  </script>
+</body>
+</html>
